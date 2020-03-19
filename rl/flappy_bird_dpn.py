@@ -1,9 +1,12 @@
-from typing import Dict, Tuple
+import random
+from typing import Dict
 
-import gym
 import numpy as np
 import torch
 import torch.nn.functional as func
+from ple import PLE
+from ple.games import FlappyBird
+from ple.games.base import PyGameWrapper
 from torch import nn, optim
 
 from utils.log import logger
@@ -77,7 +80,8 @@ class ReplayBuffer:
         self.size = min(self.size + 1, self.max_size)
 
     def sample_batch(self) -> Dict[str, np.ndarray]:
-        p = np.random.choice(self.size, size=self.batch_size, replace=False)
+        num = self.batch_size if self.size > self.batch_size else self.size
+        p = np.random.choice(self.size, size=num, replace=False)
         return dict(obs=self.obs_buf[p],
                     next_obs=self.next_obs_buf[p],
                     acts=self.acts_buf[p],
@@ -90,15 +94,18 @@ class ReplayBuffer:
 
 class Agent:
 
-    def __init__(self, hyper: dict, env: gym.Env):
-        self.env = env
+    def __init__(self, hyper: dict, game: PyGameWrapper):
         self.hyper = hyper
+        self.game = game
+        self.p = PLE(game, fps=30, display_screen=True)
+        self.p.init()
+
         self.memory = ReplayBuffer(hyper['obs_dim'], hyper['capacity'], hyper['batch_size'])
         self.epsilon_decay = hyper['epsilon_decay']
         self.epsilon = hyper['max_epsilon']
         self.max_epsilon = hyper['max_epsilon']
         self.min_epsilon = hyper['min_epsilon']
-        self.gamma = hyper['gamma']
+        self.gamma = torch.tensor(hyper['gamma']).to(Pytorch.device())
         self.target_update = hyper['target_update']
 
         self.dqn = Network(hyper['obs_dim'], hyper['action_dim']).to(Pytorch.device())
@@ -111,8 +118,9 @@ class Agent:
         self.is_test = hyper['test']
         self.epochs = hyper['epochs']
         self.batch_size = hyper['batch_size']
+        self.epoch_log = hyper['epoch_log']
 
-    def select_action(self, state: np.ndarray) -> np.ndarray:
+    def select_action(self, state: np.ndarray) -> int:
         """
         使用贪心（ ε—greedy ）搜索方法来对环境进行探索
 
@@ -123,32 +131,29 @@ class Agent:
         self.epsilon会随着回合数减小，实现 ε 的值随着回合数的增加而递减。
         """
         if self.epsilon > np.random.random():
-            selected_action = self.env.action_space.sample()
+            selected_action = random.randint(0, 1)
         else:
             # 神经网络得到动作
             selected_action = self.dqn(torch.FloatTensor(state).to(Pytorch.device())).argmax()
-            selected_action = selected_action.detach().cpu().numpy()
+            selected_action = selected_action.detach().cpu().item()
 
         if not self.is_test:
             self.transition = [state, selected_action]
 
-        print(selected_action)
-
         return selected_action
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.float64, bool]:
-        next_state, reward, done, _ = self.env.step(action)
-
+    def step(self, action: int):
+        reward = self.p.act(action)
         # 存储当前状态、行动、奖励、下一步状态、结束状态
         if not self.is_test:
-            self.transition += [reward, next_state, done]
+            self.transition += [reward, self.state(), self.p.game_over()]
             self.memory.store(*self.transition)
-
-        return next_state, reward, done
+        return reward
 
     def update_model(self):
         samples = self.memory.sample_batch()
         loss = self._compute_dqn_loss(samples)
+        loss = loss / len(samples)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -177,58 +182,58 @@ class Agent:
         """Hard update: target <- local."""
         self.dqn_target.load_state_dict(self.dqn.state_dict())
 
+    def state(self):
+        obs = self.game.getGameState()
+        return np.array([
+            obs['player_y'], obs['player_vel'], obs['next_pipe_dist_to_player'],
+            obs['next_pipe_top_y'], obs['next_pipe_bottom_y'],
+            obs['next_next_pipe_dist_to_player'], obs['next_next_pipe_top_y'],
+            obs['next_next_pipe_bottom_y']
+        ])
+
     def train(self, ):
         self.is_test = False
-        state = self.env.reset()
-        epsilons, losses, scores, score, update_cnt = [], [], [], 0, 0
+        epsilons, losses, reward_records, update_cnt = [], [], [], 0,
         for frame_idx in range(1, self.epochs + 1):
-            # 选取动作
-            action = self.select_action(state)
-            # 执行动作，获取更新的环境状态、奖励、是否完成等，并存储
-            next_state, reward, done = self.step(action)
-            state, score = next_state, score + reward
+            self.p.reset_game()
+            reward = 0
+            while not self.p.game_over():
+                # 选取动作
+                state = self.state()
+                action = self.select_action(state)
+                # 执行动作，获取更新的环境状态、奖励、是否完成等，并存储
+                step_reward = self.step(action)
+                reward = reward + step_reward
 
-            if done:
-                state = self.env.reset()
-                scores.append(score)
-                avg_score = '%.2f' % np.mean(scores)
-                logger.info("Epoch: %s, Score: %s, Avg-Score: %s" % (frame_idx, score, avg_score))
-                score = 0
+            # 计算损失函数，梯度下降
+            loss = self.update_model()
+            losses.append(loss)
+            update_cnt += 1
 
-            # 准备好训练神经网络
-            if len(self.memory) >= self.batch_size:
-                # 计算损失函数，梯度下降
-                loss = self.update_model()
-                losses.append(loss)
-                update_cnt += 1
+            # 减少ε
+            self.epsilon = max(self.min_epsilon,
+                               self.epsilon - (self.max_epsilon - self.min_epsilon) * self.epsilon_decay)
+            epsilons.append(self.epsilon)
 
-                # 减少ε
-                self.epsilon = max(self.min_epsilon,
-                                   self.epsilon - (self.max_epsilon - self.min_epsilon) * self.epsilon_decay)
-                epsilons.append(self.epsilon)
+            # 更新target神经网络
+            if update_cnt % self.target_update == 0:
+                self._target_hard_update()
 
-                # 更新target神经网络
-                if update_cnt % self.target_update == 0:
-                    self._target_hard_update()
-
-        self.env.close()
+            reward_records.append(reward)
+            if frame_idx % self.epoch_log == 0:
+                avg_score = '%.2f' % np.mean(reward_records)
+                logger.info("Epoch: %s, Score: %s, Avg-Score: %s, Loss: %s" % (frame_idx, reward, avg_score, loss))
 
     def test(self) -> None:
         self.is_test = True
 
-        state = self.env.reset()
-        done = False
+        self.p.reset_game()
         total_reward = 0
 
-        while not done:
-            self.env.render()
-            action = self.select_action(state)
-            next_state, reward, done = self.step(action)
-
-            state = next_state
-            total_reward += reward
+        while not self.p.game_over():
+            action = self.select_action(self.state())
+            total_reward += self.step(action)
         logger.info("Total-Reward: %s" % total_reward)
-        self.env.close()
 
 
 def seed_torch(seed_):
@@ -239,14 +244,14 @@ def seed_torch(seed_):
 
 
 if __name__ == '__main__':
-    env = gym.make('CartPole-v0')
-    seed = 777
-    np.random.seed(seed)
-    seed_torch(seed)
-    env.seed(seed)
-
     hyper = HYPER_PARAMS.copy()
+    hyper['obs_dim'] = 8
+    hyper['action_dim'] = 2
+    hyper['epoch_log'] = 1000
+    hyper['epochs'] = 1000000
 
-    agent = Agent(hyper, env)
+    game = FlappyBird()
+
+    agent = Agent(hyper, game)
     agent.train()
     agent.test()

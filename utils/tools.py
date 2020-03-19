@@ -160,7 +160,8 @@ class Pytorch:
 
     @staticmethod
     def device():
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return 'cpu'
 
     @staticmethod
     def to_cuda(x):

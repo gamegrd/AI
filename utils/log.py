@@ -19,19 +19,19 @@ def log_type(record, handler):
 
 
 # 获取配置的日志级别
-log_level = 'info'
+log_level = 9
 # 日志存放路径
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 LOG_DIR = os.path.join(root_dir, 'test_resources', 'run-log')
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 # 日志打印到屏幕
-log_std = ColorizedStderrHandler(bubble=True, level=log_level.standard_level)
+log_std = ColorizedStderrHandler(bubble=True, level=9)
 log_std.formatter = log_type
 # 日志打印到文件
 log_file = TimedRotatingFileHandler(
     os.path.join(LOG_DIR, '%s.log' % 'log'), date_format='%Y-%m-%d', bubble=True, encoding='utf-8',
-    level=log_level.file_level)
+    level=11)
 log_file.formatter = log_type
 
 # 脚本日志
