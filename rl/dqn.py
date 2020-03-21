@@ -191,8 +191,6 @@ class Agent:
             if done:
                 state = self.env.reset()
                 scores.append(score)
-                avg_score = '%.2f' % np.mean(scores)
-                logger.info("Epoch: %s, Score: %s, Avg-Score: %s" % (frame_idx, score, avg_score))
                 score = 0
 
             # 准备好训练神经网络
@@ -210,6 +208,9 @@ class Agent:
                 # 更新target神经网络
                 if update_cnt % self.target_update == 0:
                     self._target_hard_update()
+
+                avg_score = '%.2f' % np.mean(scores)
+                logger.info("Epoch: %s, Score: %s, Avg-Score: %s" % (frame_idx, score, avg_score))
 
         self.env.close()
 

@@ -98,7 +98,8 @@ class Critic(nn.Module):
 
 
 class Agent(object):
-    def __init__(self, state_dim, action_dim, hidden_size=256):
+    def __init__(self, env, state_dim, action_dim, hidden_size=256):
+        self.env = env
         self.actor = Actor(state_dim, action_dim, hidden_size).to(Pytorch.device())
         self.actor_target = Actor(state_dim, action_dim, hidden_size).to(Pytorch.device())
         self.actor_target.load_state_dict(self.actor.state_dict())
@@ -117,7 +118,10 @@ class Agent(object):
 
     def select_action(self, state):
         state = torch.FloatTensor(state.reshape(1, -1)).to(Pytorch.device())
-        return self.actor(state).cpu().data.numpy().flatten()
+        action = self.actor(state).cpu().data.numpy().flatten()
+        env = self.env
+        return (action + np.random.normal(0, HYPER['exploration_noise'], size=env.action_space.shape[0])).clip(
+            env.action_space.low, env.action_space.high)
 
     def update(self):
 
@@ -197,8 +201,6 @@ def train():
         for t in count():
             # 选取动作
             action = agent.select_action(state)
-            action = (action + np.random.normal(0, HYPER['exploration_noise'], size=env.action_space.shape[0])).clip(
-                env.action_space.low, env.action_space.high)
             # 获取奖励
             next_state, reward, done, info = env.step(action)
             ep_r += reward

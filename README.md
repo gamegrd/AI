@@ -163,6 +163,8 @@
 	当状态和动作空间是离散且维数不高时可使用Q-Table储存每个状态动作对的Q值，而当状态和动作空间是高维连续时，使用Q-Table不现实，DQN就是要设计一个神经网络结构，通过函数来拟合Q值。
 	它建立了两个网络，一个target网络，一个eval网络，同时使用了经验回放机制。
 ![dqn](./pics/dqn.png)
+![dqn](./pics/dqn-flow.jpg)
+![dqn](./pics/dqn-loss-func.png)
 
 - **蒙特卡洛策略梯度REINFORCE**
 	首先随机初始化参数$\theta$，对每个episode，计算其t=1到t=T-1的$return\,\nu_{t}$，然后使用随机梯度上升法更新参数。对于策略梯度定理公式里的期望，我们通过采样的形式来替代，即使用t时刻的return作为当前策略下动作价值函数的无偏估计。
@@ -210,3 +212,4 @@
 - https://zhuanlan.zhihu.com/p/25319023
 - https://zhuanlan.zhihu.com/p/36494307
 - https://zhuanlan.zhihu.com/p/25831658
+- https://www.tuicool.com/articles/FZvMNfB

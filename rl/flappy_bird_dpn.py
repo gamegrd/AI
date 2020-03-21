@@ -121,6 +121,12 @@ class Agent:
         self.epoch_log = hyper['epoch_log']
 
     def select_action(self, state: np.ndarray) -> int:
+        def random_action(scale=1):
+            action_max = int(scale * 100)
+            r = random.randint(0, 100)
+            if r <= action_max:
+                return 1
+            return 0
         """
         使用贪心（ ε—greedy ）搜索方法来对环境进行探索
 
@@ -131,7 +137,7 @@ class Agent:
         self.epsilon会随着回合数减小，实现 ε 的值随着回合数的增加而递减。
         """
         if self.epsilon > np.random.random():
-            selected_action = random.randint(0, 1)
+            selected_action = random_action()
         else:
             # 神经网络得到动作
             selected_action = self.dqn(torch.FloatTensor(state).to(Pytorch.device())).argmax()
