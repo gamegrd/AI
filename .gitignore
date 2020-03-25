@@ -33,3 +33,5 @@ __pycache__/
 *.log
 
 ._.DS_Store
+
+mnist/
