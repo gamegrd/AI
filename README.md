@@ -153,18 +153,18 @@
 
 - **SARSA**
 	Q-Learning在走下一步的时候是先看下一步应该走哪，但是最后不一定走，而Sarsa是决定完要走的步之后一定会去走那一步。Sarsa虽然说是说到做到，但是由于它选取下一步的位置是严格按照已有学习到的经验来选择，所以它探索未知位置的能力就会很差。
-![sarsa](./pics/sarsa.png)
+![sarsa](test_resources/pics/sarsa.png)
 
 - **Sarsa lambda**
     Sarsa lambda在Sarsa的基础上增加了一个概念，就是它到终点后会再反过来看一下自己曾经走过的路。整体来说还是Sarsa的框框，只是增加一个指标，只是这样可以使学习效率变高，能更快速的达到目的Q表。
-![sarsa lambda](./pics/sarsa-lambda.png)
+![sarsa lambda](test_resources/pics/sarsa-lambda.png)
 
 - **DQN**
 	当状态和动作空间是离散且维数不高时可使用Q-Table储存每个状态动作对的Q值，而当状态和动作空间是高维连续时，使用Q-Table不现实，DQN就是要设计一个神经网络结构，通过函数来拟合Q值。
 	它建立了两个网络，一个target网络，一个eval网络，同时使用了经验回放机制。
-![dqn](./pics/dqn.png)
-![dqn](./pics/dqn-flow.jpg)
-![dqn](./pics/dqn-loss-func.png)
+![dqn](test_resources/pics/dqn.png)
+![dqn](test_resources/pics/dqn-flow.jpg)
+![dqn](test_resources/pics/dqn-loss-func.png)
 
 - **蒙特卡洛策略梯度REINFORCE**
 	首先随机初始化参数$\theta$，对每个episode，计算其t=1到t=T-1的$return\,\nu_{t}$，然后使用随机梯度上升法更新参数。对于策略梯度定理公式里的期望，我们通过采样的形式来替代，即使用t时刻的return作为当前策略下动作价值函数的无偏估计。
@@ -173,13 +173,13 @@
 	1. 由于agent在一个episode中会采取很多动作，我们很难说哪个动作对最后结果是有用的，换句话说，这种算法存在高方差（variance）;
 	2. 收敛速度慢
 	3. 只在episodic环境下能用
-	![REINFORCE](./pics/reinforce.png)
+	![REINFORCE](test_resources/pics/reinforce.png)
 
 - **Actor-Critic策略梯度**
 	拿一个 Critic 去学习这些奖惩机制, 学习完了以后. 由 Actor 来指手画脚, 由 Critic 来告诉 Actor 你的那些指手画脚哪些指得好, 哪些指得差, Critic 通过学习环境和奖励之间的关系, 能看到现在所处状态的潜在奖励, 所以用它来指点 Actor 便能使 Actor 每一步都在更新, 如果使用单纯的 Policy Gradients, Actor 只能等到回合结束才能开始更新.
 	
 	Actor-Critic 涉及到了两个神经网络, 而且每次都是在连续状态中更新参数, 每次参数更新前后都存在相关性, 导致神经网络只能片面的看待问题, 甚至导致神经网络学不到东西.
-![ac](./pics/actor-critic.png)
+![ac](test_resources/pics/actor-critic.png)
 
 - **GAE算法**
 
@@ -189,7 +189,7 @@
 
 - **DDPG算法**
   是**Actor-Critic**和**DQN**算法的结合体
-  ![ddpg](./pics/ddpg.jpg)
+  ![ddpg](test_resources/pics/ddpg.jpg)
 
 - **A3C算法**
 

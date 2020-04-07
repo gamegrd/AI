@@ -34,4 +34,4 @@ __pycache__/
 
 ._.DS_Store
 
-mnist/
+test_resources/mnist/
