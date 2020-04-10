@@ -4,14 +4,20 @@ from itertools import count
 import gym
 import numpy as np
 import torch
-import torch.nn.functional as func
-from torch import nn, optim
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from tensorboardX import SummaryWriter
 
-from utils.log import logger
-from utils.tools import Pytorch, TorchBoard
-from utils.vars import MODULE_TRAIN
-
+'''
+Implementation of Deep Deterministic Policy Gradients (DDPG) with pytorch 
+riginal paper: https://arxiv.org/abs/1509.02971
+Not the author's implementation !
+'''
 HYPER = {
+    # mode = 'train' or 'test'
+    'mode': 'train',
+    'env_name': 'Pendulum-v0',
     'tau': 0.005,
     'target_update_interval': 10,
     'test_iteration': 10,
@@ -35,10 +41,24 @@ HYPER = {
     'print_log': 5,
     'update_iteration': 10,
 }
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+script_name = os.path.basename(__file__)
+env = gym.make(HYPER['env_name']).unwrapped
+
+if HYPER['seed']:
+    env.seed(HYPER['random_seed'])
+    torch.manual_seed(HYPER['random_seed'])
+    np.random.seed(HYPER['random_seed'])
+
+state_dim = env.observation_space.shape[0]
+action_dim = env.action_space.shape[0]
+max_action = float(env.action_space.high[0])
+min_Val = torch.tensor(1e-7).float().to(device)  # min value
+
+directory = './exp' + script_name + HYPER['env_name'] + './'
 
 
 class ReplayBuffer:
-    """经验池"""
 
     def __init__(self, max_size=HYPER['capacity']):
         self.storage = []
@@ -57,91 +77,89 @@ class ReplayBuffer:
         x, y, u, r, d = [], [], [], [], []
 
         for i in ind:
-            x_, y_, u_, r_, d_ = self.storage[i]
-            x.append(np.array(x_, copy=False))
-            y.append(np.array(y_, copy=False))
-            u.append(np.array(u_, copy=False))
-            r.append(np.array(r_, copy=False))
-            d.append(np.array(d_, copy=False))
+            X, Y, U, R, D = self.storage[i]
+            x.append(np.array(X, copy=False))
+            y.append(np.array(Y, copy=False))
+            u.append(np.array(U, copy=False))
+            r.append(np.array(R, copy=False))
+            d.append(np.array(D, copy=False))
 
         return np.array(x), np.array(y), np.array(u), np.array(r).reshape(-1, 1), np.array(d).reshape(-1, 1)
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_size=256):
+    def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
 
-        self.l1 = nn.Linear(state_dim, hidden_size)
-        self.l2 = nn.Linear(hidden_size, hidden_size)
-        self.l3 = nn.Linear(hidden_size, action_dim)
+        self.l1 = nn.Linear(state_dim, 400)
+        self.l2 = nn.Linear(400, 300)
+        self.l3 = nn.Linear(300, action_dim)
+
+        self.max_action = max_action
 
     def forward(self, x):
-        x = func.relu(self.l1(x))
-        x = func.relu(self.l2(x))
-        x = torch.tanh(self.l3(x))
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
+        x = self.max_action * torch.tanh(self.l3(x))
         return x
 
 
 class Critic(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_size=256):
+    def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
 
-        self.l1 = nn.Linear(state_dim + action_dim, hidden_size)
-        self.l2 = nn.Linear(hidden_size, hidden_size)
-        self.l3 = nn.Linear(hidden_size, 1)
+        self.l1 = nn.Linear(state_dim + action_dim, 400)
+        self.l2 = nn.Linear(400, 300)
+        self.l3 = nn.Linear(300, 1)
 
     def forward(self, x, u):
-        x = func.relu(self.l1(torch.cat([x, u], 1)))
-        x = func.relu(self.l2(x))
+        x = F.relu(self.l1(torch.cat([x, u], 1)))
+        x = F.relu(self.l2(x))
         x = self.l3(x)
         return x
 
 
-class Agent(object):
-    def __init__(self, env, state_dim, action_dim, hidden_size=256):
-        self.env = env
-        self.actor = Actor(state_dim, action_dim, hidden_size).to(Pytorch.device())
-        self.actor_target = Actor(state_dim, action_dim, hidden_size).to(Pytorch.device())
+class DDPG(object):
+    def __init__(self, state_dim, action_dim, max_action):
+        self.actor = Actor(state_dim, action_dim, max_action).to(device)
+        self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.actor_optimizer = optim.Adam(self.actor.parameters(), HYPER['learning_rate'])
 
-        self.critic = Critic(state_dim, action_dim).to(Pytorch.device())
-        self.critic_target = Critic(state_dim, action_dim).to(Pytorch.device())
+        self.critic = Critic(state_dim, action_dim).to(device)
+        self.critic_target = Critic(state_dim, action_dim).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
         self.critic_optimizer = optim.Adam(self.critic.parameters(), HYPER['learning_rate'])
-
         self.replay_buffer = ReplayBuffer()
-        self.writer = TorchBoard.writer('ddpg', MODULE_TRAIN)
+        self.writer = SummaryWriter(directory)
         self.num_critic_update_iteration = 0
         self.num_actor_update_iteration = 0
         self.num_training = 0
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(Pytorch.device())
-        action = self.actor(state).cpu().data.numpy().flatten()
-        env = self.env
-        return (action + np.random.normal(0, HYPER['exploration_noise'], size=env.action_space.shape[0])).clip(
-            env.action_space.low, env.action_space.high)
+        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+        return self.actor(state).cpu().data.numpy().flatten()
 
     def update(self):
 
         for it in range(HYPER['update_iteration']):
+            # Sample replay buffer
             x, y, u, r, d = self.replay_buffer.sample(HYPER['batch_size'])
-            state = torch.FloatTensor(x).to(Pytorch.device())
-            action = torch.FloatTensor(u).to(Pytorch.device())
-            next_state = torch.FloatTensor(y).to(Pytorch.device())
-            done = torch.FloatTensor(d).to(Pytorch.device())
-            reward = torch.FloatTensor(r).to(Pytorch.device())
+            state = torch.FloatTensor(x).to(device)
+            action = torch.FloatTensor(u).to(device)
+            next_state = torch.FloatTensor(y).to(device)
+            done = torch.FloatTensor(d).to(device)
+            reward = torch.FloatTensor(r).to(device)
 
-            # 计算target_Q的值
-            target_q = self.critic_target(next_state, self.actor_target(next_state))
-            target_q = reward + ((1 - done) * HYPER['gamma'] * target_q).detach()
+            # Compute the target Q value
+            target_Q = self.critic_target(next_state, self.actor_target(next_state))
+            target_Q = reward + ((1 - done) * HYPER['gamma'] * target_Q).detach()
 
-            # 获取当前的Q估计值
-            current_q = self.critic(state, action)
+            # Get current Q estimate
+            current_Q = self.critic(state, action)
 
             # Compute critic loss
-            critic_loss = func.mse_loss(current_q, target_q)
+            critic_loss = F.mse_loss(current_Q, target_Q)
             self.writer.add_scalar('Loss/critic_loss', critic_loss, global_step=self.num_critic_update_iteration)
             # Optimize the critic
             self.critic_optimizer.zero_grad()
@@ -167,61 +185,78 @@ class Agent(object):
             self.num_actor_update_iteration += 1
             self.num_critic_update_iteration += 1
 
-    @staticmethod
-    def pkl_file(model='actor'):
-        root_dirs = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-        pkl_dir = os.path.join(root_dirs, 'resources', 'pkl', 'ddpg')
-        if not os.path.exists(pkl_dir):
-            os.makedirs(pkl_dir)
-        return os.path.join(pkl_dir, model + '.pkl')
-
     def save(self):
-        torch.save(self.actor.state_dict(), Agent.pkl_file('actor'))
-        torch.save(self.critic.state_dict(), Agent.pkl_file('critic'))
+        torch.save(self.actor.state_dict(), directory + 'actor.pth')
+        torch.save(self.critic.state_dict(), directory + 'critic.pth')
+        # print("====================================")
+        # print("Model has been saved...")
+        # print("====================================")
 
     def load(self):
-        self.actor.load_state_dict(torch.load(Agent.pkl_file('actor')))
-        self.critic.load_state_dict(torch.load(Agent.pkl_file('critic')))
+        self.actor.load_state_dict(torch.load(directory + 'actor.pth'))
+        self.critic.load_state_dict(torch.load(directory + 'critic.pth'))
+        print("====================================")
+        print("model has been loaded...")
+        print("====================================")
 
 
-def train():
-    env = gym.make('Pendulum-v0').unwrapped
-
-    if HYPER['seed']:
-        env.seed(HYPER['random_seed'])
-        torch.manual_seed(HYPER['random_seed'])
-        np.random.seed(HYPER['random_seed'])
-
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
-    agent = Agent(state_dim, action_dim, 256)
+def main():
+    agent = DDPG(state_dim, action_dim, max_action)
     ep_r = 0
-    for i in range(HYPER['max_episode']):
-        state = env.reset()
-        for t in count():
-            # 选取动作
-            action = agent.select_action(state)
-            # 获取奖励
-            next_state, reward, done, info = env.step(action)
-            ep_r += reward
-
-            if HYPER['render'] and i >= HYPER['render_interval']:
+    if HYPER['mode'] == 'test':
+        agent.load()
+        for i in range(HYPER['test_iteration']):
+            state = env.reset()
+            for t in count():
+                action = agent.select_action(state)
+                next_state, reward, done, info = env.step(np.float32(action))
+                ep_r += reward
                 env.render()
+                if done or t >= HYPER['max_length_of_trajectory']:
+                    print("Ep_i \t{}, the ep_r is \t{:0.2f}, the step is \t{}".format(i, ep_r, t))
+                    ep_r = 0
+                    break
+                state = next_state
 
-            agent.replay_buffer.push((state, next_state, action, reward, np.float(done)))
-            state = next_state
-            if done or t >= HYPER['max_length_of_trajectory']:
-                agent.writer.add_scalar('ep_r', ep_r, global_step=i)
-                if i % HYPER['print_log'] == 0:
-                    logger.info("Step: %s... Reward: %s... Step: %s" % (t, ep_r, i))
-                ep_r = 0
-                break
+    elif HYPER['mode'] == 'train':
+        print("====================================")
+        print("Collection Experience...")
+        print("====================================")
+        if HYPER['load']:
+            agent.load()
+        for i in range(HYPER['max_episode']):
+            state = env.reset()
+            for t in count():
+                action = agent.select_action(state)
 
-        if i % HYPER['log_interval'] == 0:
-            agent.save()
-        if len(agent.replay_buffer.storage) >= HYPER['capacity'] - 1:
-            agent.update()
+                # issue 3 add noise to action
+                action = (action + np.random.normal(0, HYPER['exploration_noise'],
+                                                    size=env.action_space.shape[0])).clip(
+                    env.action_space.low, env.action_space.high)
+
+                next_state, reward, done, info = env.step(action)
+                ep_r += reward
+                if HYPER['render'] and i >= HYPER['render_interval']: env.render()
+                agent.replay_buffer.push((state, next_state, action, reward, np.float(done)))
+                # if (i+1) % 10 == 0:
+                #     print('Episode {},  The memory size is {} '.format(i, len(agent.replay_buffer.storage)))
+
+                state = next_state
+                if done or t >= HYPER['max_length_of_trajectory']:
+                    agent.writer.add_scalar('ep_r', ep_r, global_step=i)
+                    if i % HYPER['print_log'] == 0:
+                        print("Ep_i \t{}, the ep_r is \t{:0.2f}, the step is \t{}".format(i, ep_r, t))
+                    ep_r = 0
+                    break
+
+            if i % HYPER['log_interval'] == 0:
+                agent.save()
+            if len(agent.replay_buffer.storage) >= HYPER['capacity'] - 1:
+                agent.update()
+
+    else:
+        raise NameError("mode wrong!!!")
 
 
 if __name__ == '__main__':
-    train()
+    main()
